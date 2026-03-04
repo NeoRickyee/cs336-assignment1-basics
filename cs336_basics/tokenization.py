@@ -2,8 +2,8 @@ import multiprocessing
 import os
 import regex as re
 
-from collections import Counter
-from typing import BinaryIO, Dict, List, Tuple
+from collections import Counter, defaultdict
+from typing import BinaryIO, Dict, List, Set, Tuple
 
 from cs336_basics.util.priority_dict import PriorityDict
 
@@ -35,6 +35,12 @@ class Tokenizer:
         self.word_counts = self.count_words_in_corpus()
         # Parallel initialization of vocab and pairs
         self.word_to_vocab, self.priority_dict = self.initialize_vocab_and_pairs()
+
+        # Build inverted index for efficiency
+        self.token_to_words: Dict[bytes, Set[bytes]] = defaultdict(set)
+        for word, tokens in self.word_to_vocab.items():
+            for token in tokens:
+                self.token_to_words[token].add(word)
     
     def count_words_in_corpus(self) -> Dict[bytes, int]:
         # Split corpus into chunks
@@ -137,9 +143,12 @@ class Tokenizer:
         combined_top_pair = top_pair[0] + top_pair[1]
         reduced_vocab_pairs_and_counts: Dict[Tuple[bytes, bytes], int] = Counter()
         added_vocab_pairs_and_counts: Dict[Tuple[bytes, bytes], int] = Counter()
-        for word, vocabs in self.word_to_vocab.items():
+
+        words_to_check = self.token_to_words[top_pair[0]] & self.token_to_words[top_pair[1]]
+        for word in words_to_check:
             if combined_top_pair not in word:
                 continue
+            vocabs = self.word_to_vocab[word]
             # combined_top_pair exist in word
             # check if top_pair can actually combine in vocabs
 
@@ -177,9 +186,13 @@ class Tokenizer:
                 if index + 1 < len(updated_vocabs):
                     added_vocab_pairs_and_counts[(updated_vocabs[index], updated_vocabs[index+1])] += word_count
             self.word_to_vocab[word] = updated_vocabs
+
+            self.token_to_words[combined_top_pair].add(word)
+            if top_pair[0] not in updated_vocabs:
+                self.token_to_words[top_pair[0]].discard(word)
+            if top_pair[1] not in updated_vocabs:
+                self.token_to_words[top_pair[1]].discard(word)
         return reduced_vocab_pairs_and_counts, added_vocab_pairs_and_counts
-
-
 
     def find_chunk_boundaries(
         self,
