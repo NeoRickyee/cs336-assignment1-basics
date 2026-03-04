@@ -20,6 +20,11 @@ class PriorityDict:
         self.entry_finder = dict()
         self.pq = []
 
+    def _compaction(self):
+        if len(self.pq) > 50000 and len(self.pq) > 2 * len(self.entry_finder):
+            self.pq = list(self.entry_finder.values())
+            heapq.heapify(self.pq)
+
     def add(self, key, value):
         # when key already exist, disable it
         if key in self.entry_finder:
@@ -27,6 +32,7 @@ class PriorityDict:
         node: MaxHeapNode = MaxHeapNode(key, value)
         self.entry_finder[key] = node
         heapq.heappush(self.pq, node)
+        self._compaction()
     
     def pop(self):
         while self.pq:
@@ -61,3 +67,4 @@ class PriorityDict:
         node: MaxHeapNode = MaxHeapNode(key, value)
         self.entry_finder[key] = node
         heapq.heappush(self.pq, node)
+        self._compaction()

@@ -8,7 +8,7 @@ from typing import BinaryIO, Dict, List, Set, Tuple
 from cs336_basics.util.priority_dict import PriorityDict
 
 
-class Tokenizer:
+class BPE:
     def __init__(self, input_path: str, vocab_size: int, special_tokens: list[str]):
         try:
             # On Linux, this respects taskset/cgroups limits
@@ -100,12 +100,12 @@ class Tokenizer:
 
         return word_to_vocab, priority_dict
 
-    def tokenize(self) -> Tuple[Dict[int, bytes], list[Tuple[bytes, bytes]]]:
+    def train(self) -> Tuple[Dict[int, bytes], list[Tuple[bytes, bytes]]]:
         """
             Returns:
             Tuple[Dict[int, bytes], list[Tuple[bytes, bytes]]]:
                 vocab:
-                    The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
+                    The vocabulary, a mapping from int (token ID in the vocabulary)
                     to bytes (token bytes)
                 merges:
                     BPE merges. Tuples of bytes (<token1>, <token2>),
@@ -118,7 +118,7 @@ class Tokenizer:
             # find top token pair
             top_pair, frequency = self.priority_dict.pop()
             if not top_pair and not frequency:
-                print("Tokenizer: No more vocab pairs can be found. STOP")
+                print("BPE: No more vocab pairs can be found. STOP")
                 break
             # update vocab
             self.vocab[len(self.vocab)] = top_pair[0] + top_pair[1]
@@ -277,4 +277,4 @@ class Tokenizer:
     def _get_word_and_bp_count_wrapper(args):
         input_path, chunk_start, chunk_end, special_tokens = args
         with open(input_path, "rb") as f:
-            return Tokenizer.get_word_and_bp_count(f, chunk_start, chunk_end, special_tokens)
+            return BPE.get_word_and_bp_count(f, chunk_start, chunk_end, special_tokens)
