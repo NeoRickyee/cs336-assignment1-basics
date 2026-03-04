@@ -33,15 +33,18 @@ class Tokenizer:
 
         # Parallel
         self.word_counts = self.count_words_in_corpus()
-        # Not parallel (yet?)
-        self.word_to_vocab = self.get_words_vocabs()
-        # Count basic vocab pairs
-        self.priority_dict = self.initialize_priority_dict()
+        # Parallel initialization of vocab and pairs
+        self.word_to_vocab, self.priority_dict = self.initialize_vocab_and_pairs()
     
     def count_words_in_corpus(self) -> Dict[bytes, int]:
         # Split corpus into chunks
+        file_size = os.path.getsize(self.input_path)
+        target_chunk_size = 128 * 1024 * 1024  # 64 MB
+        desired_num_chunks = max(self.available_cpus, file_size // target_chunk_size + 1)
+        if desired_num_chunks < self.available_cpus:
+            desired_num_chunks = self.available_cpus
         with open(self.input_path, "rb") as f:
-            boundaries = self.find_chunk_boundaries(f, self.available_cpus, b"<|endoftext|>")
+            boundaries = self.find_chunk_boundaries(f, desired_num_chunks, b"<|endoftext|>")
 
         # Count words in parallel
         with multiprocessing.Pool(self.available_cpus) as pool:
@@ -55,14 +58,41 @@ class Tokenizer:
                 word_counts.update(chunk_word_counts)
 
         return word_counts
-    
-    def get_words_vocabs(self) -> Dict[bytes, List[bytes]]:
-        # Add map of word to current vocab
-        word_to_vocab: Dict[bytes, List[bytes]] = dict()
-        for word, _ in self.word_counts.items():
-            word_vocab = [word[i:i+1] for i in range(len(word))]
-            word_to_vocab[word] = word_vocab
-        return word_to_vocab
+
+    @staticmethod
+    def _compute_initial_vocab_and_pairs(
+        chunk: List[Tuple[bytes, int]],
+    ) -> Tuple[Dict[bytes, List[bytes]], Dict[Tuple[bytes, bytes], int]]:
+        word_to_vocab = {}
+        pair_counts = Counter()
+        for word, freq in chunk:
+            vocab = [word[i : i + 1] for i in range(len(word))]
+            word_to_vocab[word] = vocab
+            for i in range(len(vocab) - 1):
+                pair_counts[(vocab[i], vocab[i + 1])] += freq
+        return word_to_vocab, pair_counts
+
+    def initialize_vocab_and_pairs(self) -> Tuple[Dict[bytes, List[bytes]], PriorityDict]:
+        items = list(self.word_counts.items())
+        word_to_vocab = {}
+        total_pair_counts = Counter()
+
+        if len(items) < 10000:
+            word_to_vocab, total_pair_counts = self._compute_initial_vocab_and_pairs(items)
+        else:
+            chunk_size = (len(items) + self.available_cpus - 1) // self.available_cpus
+            chunks = [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
+
+            with multiprocessing.Pool(self.available_cpus) as pool:
+                for w2v, pc in pool.imap_unordered(self._compute_initial_vocab_and_pairs, chunks):
+                    word_to_vocab.update(w2v)
+                    total_pair_counts.update(pc)
+
+        priority_dict = PriorityDict()
+        for pair, count in total_pair_counts.items():
+            priority_dict.add(pair, count)
+
+        return word_to_vocab, priority_dict
 
     def tokenize(self) -> Tuple[Dict[int, bytes], list[Tuple[bytes, bytes]]]:
         """
@@ -98,7 +128,9 @@ class Tokenizer:
                 self.priority_dict.increase(vocab_pairs, count)
 
         return self.vocab, self.merged_pairs
-        
+    
+    # def _update_vocab_and_get_change_wrapper
+
     def update_word_to_vocab_and_get_change(
         self, top_pair: Tuple[bytes, bytes]
     ) -> Tuple[Dict[Tuple[bytes, bytes], int], Dict[Tuple[bytes, bytes], int]]:
@@ -146,7 +178,7 @@ class Tokenizer:
                     added_vocab_pairs_and_counts[(updated_vocabs[index], updated_vocabs[index+1])] += word_count
             self.word_to_vocab[word] = updated_vocabs
         return reduced_vocab_pairs_and_counts, added_vocab_pairs_and_counts
-                
+
 
 
     def find_chunk_boundaries(
@@ -233,18 +265,3 @@ class Tokenizer:
         input_path, chunk_start, chunk_end, special_tokens = args
         with open(input_path, "rb") as f:
             return Tokenizer.get_word_and_bp_count(f, chunk_start, chunk_end, special_tokens)
-
-    def initialize_priority_dict(self) -> PriorityDict:
-        bytes_pair_count: Dict[Tuple[bytes, bytes], int] = Counter()
-        for word, freq in self.word_counts.items():
-            vocabs = self.word_to_vocab[word]
-            if len(vocabs) < 2:
-                continue
-            for pair in zip(vocabs[:-1], vocabs[1:]):
-                bytes_pair_count[pair] += freq
-        
-        priority_dict: PriorityDict = PriorityDict()
-        for bytes_tuple, count in bytes_pair_count.items():
-            priority_dict.add(bytes_tuple, count)
-        
-        return priority_dict
