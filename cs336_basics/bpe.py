@@ -45,7 +45,7 @@ class BPE:
     def count_words_in_corpus(self) -> Dict[bytes, int]:
         # Split corpus into chunks
         file_size = os.path.getsize(self.input_path)
-        target_chunk_size = 128 * 1024 * 1024  # 64 MB
+        target_chunk_size = 128 * 1024 * 1024  # 128 MB
         desired_num_chunks = max(self.available_cpus, file_size // target_chunk_size + 1)
         if desired_num_chunks < self.available_cpus:
             desired_num_chunks = self.available_cpus
@@ -201,8 +201,8 @@ class BPE:
                 self.token_to_words[top_pair[1]].discard(word)
         return reduced_vocab_pairs_and_counts, added_vocab_pairs_and_counts
 
+    @staticmethod
     def find_chunk_boundaries(
-        self,
         file: BinaryIO,
         desired_num_chunks: int,
         split_special_token: bytes,
