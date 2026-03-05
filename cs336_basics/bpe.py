@@ -144,7 +144,14 @@ class BPE:
         reduced_vocab_pairs_and_counts: Dict[Tuple[bytes, bytes], int] = Counter()
         added_vocab_pairs_and_counts: Dict[Tuple[bytes, bytes], int] = Counter()
 
-        words_to_check = self.token_to_words[top_pair[0]] & self.token_to_words[top_pair[1]]
+        # Optimization: Avoid creating a new set for intersection to save memory
+        tokens_0 = self.token_to_words[top_pair[0]]
+        tokens_1 = self.token_to_words[top_pair[1]]
+        if len(tokens_0) < len(tokens_1):
+            words_to_check = [w for w in tokens_0 if w in tokens_1]
+        else:
+            words_to_check = [w for w in tokens_1 if w in tokens_0]
+
         for word in words_to_check:
             if combined_top_pair not in word:
                 continue
