@@ -72,7 +72,7 @@ class BPE:
         word_to_vocab = {}
         pair_counts = Counter()
         for word, freq in chunk:
-            vocab = [word[i : i + 1] for i in range(len(word))]
+            vocab = [b'%c' % b for b in word]
             word_to_vocab[word] = vocab
             for i in range(len(vocab) - 1):
                 pair_counts[(vocab[i], vocab[i + 1])] += freq

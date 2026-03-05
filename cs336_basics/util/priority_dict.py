@@ -26,10 +26,11 @@ class PriorityDict:
             heapq.heapify(self.pq)
 
     def add(self, key, value):
-        # when key already exist, disable it
-        if key in self.entry_finder:
-            self.entry_finder[key].active = False
         node: MaxHeapNode = MaxHeapNode(key, value)
+        # when key already exist, disable it
+        entry = self.entry_finder.get(key)
+        if entry:
+            entry.active = False
         self.entry_finder[key] = node
         heapq.heappush(self.pq, node)
         self._compaction()
@@ -43,10 +44,10 @@ class PriorityDict:
         return None, None
 
     def reduce(self, key, reduction):
-        if key not in self.entry_finder:
+        try:
+            value = self.entry_finder[key].value - reduction
+        except KeyError:
             assert False
-            return
-        value = self.entry_finder[key].value - reduction
         assert(value >= 0)
         if value == 0:
             self.entry_finder[key].active = False
@@ -54,13 +55,15 @@ class PriorityDict:
         self._update(key, value)
     
     def increase(self, key, addition):
-        if key not in self.entry_finder:
+        entry = self.entry_finder.get(key)
+        if not entry:
             node: MaxHeapNode = MaxHeapNode(key, addition)
             self.entry_finder[key] = node
             heapq.heappush(self.pq, node)
             return
-        value = self.entry_finder[key].value + addition
-        self._update(key, value)
+        else:
+            value = entry.value + addition
+            self._update(key, value)
 
     def _update(self, key, value):
         self.entry_finder[key].active = False
