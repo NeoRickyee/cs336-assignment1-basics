@@ -245,3 +245,48 @@ def encode_dataset(
     print(f"Input document size: {format_size(stats['bytes'])}")
     print(f"Total tokens: {stats['tokens']}")
     print(f"Elapsed time: {elapsed_time:.4f}")
+
+
+def decode_dataset(
+    dataset_key: str, vocab_path: str, merges_path: str,
+    input_path: str, output_path: str, special_tokens: List[str]
+) -> None:
+    """
+    Decodes a .npy file containing token IDs back to text.
+    """
+    if not vocab_path:
+        vocab_path = os.path.join(BPE_SAVE_DIR.get(dataset_key, ""), "vocab.json")
+    if not merges_path:
+        merges_path = os.path.join(BPE_SAVE_DIR.get(dataset_key, ""), "merges.json")
+    if not input_path:
+        input_file_name = f"train_encoded.npy"
+        input_path = os.path.join(BPE_SAVE_DIR.get(dataset_key, "."), input_file_name)
+
+    if not os.path.exists(vocab_path) or not os.path.exists(merges_path):
+        print(f"Error: Tokenizer files not found at {vocab_path} or {merges_path}")
+        return
+
+    if not os.path.exists(input_path):
+        print(f"Error: Input file not found at {input_path}")
+        return
+
+    if not output_path:
+        base, _ = os.path.splitext(input_path)
+        output_path = base + "_decoded.txt"
+
+    print(f"Loading tokenizer from {vocab_path} and {merges_path}...")
+    tokenizer = Tokenizer.from_files(vocab_path, merges_path, special_tokens)
+
+    print(f"Decoding {input_path}...")
+    
+    data = np.load(input_path, mmap_mode='r')
+    CHUNK_SIZE = 8 * 1024 * 1024 # 1M tokens
+
+    print(f"Writing decoded text to {output_path}...")
+    with open(output_path, "w", encoding="utf-8") as f:
+        for i in range(0, len(data), CHUNK_SIZE):
+            chunk = data[i:i+CHUNK_SIZE]
+            text = tokenizer.decode(chunk.tolist())
+            f.write(text)
+            
+    print(f"Done. Decoded file saved to {output_path}")

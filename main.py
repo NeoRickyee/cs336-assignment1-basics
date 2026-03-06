@@ -2,7 +2,7 @@
 import argparse
 
 from util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
-from util.bpe_util import train_bpe, encode_dataset
+from util.bpe_util import train_bpe, encode_dataset, decode_dataset
 
 # python main.py train-bpe --dataset tinystory
 # python main.py encode --dataset tinystory --num-docs 10
@@ -84,6 +84,40 @@ def main():
         help="Dataset split to encode"
     )
 
+    # Subparser for decoding
+    decode_parser = subparsers.add_parser("decode", help="Decode a .npy file")
+    decode_parser.add_argument(
+        "--dataset", 
+        type=str, 
+        choices=DATASETS.keys(), 
+        required=True,
+        help="Dataset key (for tokenizer)"
+    )
+    decode_parser.add_argument(
+        "--vocab-file",
+        type=str,
+        default=None,
+        help="Path to vocab.json"
+    )
+    decode_parser.add_argument(
+        "--merges-file",
+        type=str,
+        default=None,
+        help="Path to merges.json"
+    )
+    decode_parser.add_argument(
+        "--input-file",
+        type=str,
+        default=None,
+        help="Input .npy file to decode"
+    )
+    decode_parser.add_argument(
+        "--output-file",
+        type=str,
+        default=None,
+        help="Output .txt file path"
+    )
+
     args = parser.parse_args()
     
     # Default configuration
@@ -101,6 +135,15 @@ def main():
             args.output_file, 
             default_special_tokens,
             split=args.split
+        )
+    elif args.command == "decode":
+        decode_dataset(
+            args.dataset,
+            args.vocab_file,
+            args.merges_file,
+            args.input_file,
+            args.output_file,
+            default_special_tokens
         )
     else:
         parser.print_help()
