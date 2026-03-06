@@ -76,6 +76,13 @@ def main():
         default=None,
         help="Output file path (JSON)"
     )
+    encode_parser.add_argument(
+        "--split",
+        type=str,
+        choices=["train", "valid"],
+        default="train",
+        help="Dataset split to encode"
+    )
 
     args = parser.parse_args()
     
@@ -92,7 +99,8 @@ def main():
             args.merges_file, 
             args.num_docs, 
             args.output_file, 
-            default_special_tokens
+            default_special_tokens,
+            split=args.split
         )
     else:
         parser.print_help()
