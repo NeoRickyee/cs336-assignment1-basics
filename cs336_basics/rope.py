@@ -1,5 +1,4 @@
 from einops import einsum, rearrange
-import jaxtyping
 import torch
 from torch import Tensor
 from torch.nn import Module
@@ -28,10 +27,14 @@ class RoPE(Module):
         self.register_buffer("cis", freq_cis, persistent=False)
         # setting persistent False makes this buffer exist independently from module RoPE
 
-    
-    def forward(self, x: Tensor, token_positions: Tensor) -> Tensor:
+
+    def forward(self, x: Tensor, token_positions: Optional[Tensor] = None) -> Tensor:
         x = rearrange(x, "... seq_len (d_k_split split) -> ... seq_len d_k_split split", split=2)
         x_complex = torch.view_as_complex(x)
+
+        if token_positions is None:
+            seq_len = x.shape[-3]
+            token_positions = torch.arange(end = seq_len, device=x.device)
 
         theta_cis = self.cis[token_positions]
 

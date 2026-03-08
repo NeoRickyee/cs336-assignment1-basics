@@ -96,7 +96,7 @@ def run_swiglu(
     })
     return swiglu(in_features)
 
-
+from cs336_basics import functions
 
 def run_scaled_dot_product_attention(
     Q: Float[Tensor, " ... queries d_k"],
@@ -116,8 +116,9 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    raise NotImplementedError
+    return functions.scaled_dot_product_attention(Q, K, V, mask)
 
+from cs336_basics import attention
 
 def run_multihead_self_attention(
     d_model: int,
@@ -150,7 +151,14 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    Attention = attention.MultiHeadSelfAttention(d_model, num_heads)
+    Attention.load_state_dict({
+        "wq.weight" : q_proj_weight,
+        "wk.weight" : k_proj_weight,
+        "wv.weight" : v_proj_weight,
+        "wo.weight" : o_proj_weight,
+    })
+    return Attention(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -190,7 +198,14 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    Attention = attention.MultiHeadSelfAttention(d_model, num_heads, True, theta, max_seq_len)
+    Attention.load_state_dict({
+        "wq.weight" : q_proj_weight,
+        "wk.weight" : k_proj_weight,
+        "wv.weight" : v_proj_weight,
+        "wo.weight" : o_proj_weight,
+    })
+    return Attention(in_features, token_positions)
 
 from cs336_basics import rope
 
@@ -435,6 +450,7 @@ def run_get_batch(
     """
     raise NotImplementedError
 
+from cs336_basics import functions
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
     """
@@ -449,7 +465,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise NotImplementedError
+    return functions.softmax(in_features, dim)
 
 
 def run_cross_entropy(
