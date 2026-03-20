@@ -1,4 +1,4 @@
-from jaxtyping import Float, Bool
+from jaxtyping import Float, Bool, Int
 import math
 import torch
 from torch import Tensor
@@ -21,3 +21,17 @@ def scaled_dot_product_attention(
     if mask is not None:
         QK = QK.masked_fill(mask == 0, float('-inf'))
     return softmax(QK / math.sqrt(d_k)).matmul(V)
+
+def cross_entropy_loss(
+    inputs: Float[Tensor, "batch_size vocab_size"],
+    targets: Int[Tensor, "batch_size"]
+):
+    # flatten inputs and targets
+    inputs = inputs.view(-1, inputs.size(-1))
+    max_val = inputs.max(dim=-1, keepdim=True).values
+    inputs = inputs - max_val
+    targets = targets.view(-1, 1)
+    log_sum_exp: Tensor = inputs.exp().sum(dim=-1).log()
+    true_logits: Float[Tensor, "... 1"] = inputs.gather(dim=-1, index=targets)
+
+    return (log_sum_exp - true_logits.view(-1)).mean()
