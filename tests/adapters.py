@@ -463,6 +463,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
     silu = positionwise_feedforward.SiLU()
     return silu(in_features)
 
+from cs336_basics import data_loader
 
 def run_get_batch(
     dataset: npt.NDArray, batch_size: int, context_length: int, device: str
@@ -484,7 +485,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return data_loader.data_loading(dataset, batch_size, context_length, device)
 
 from cs336_basics import functions
 
@@ -569,6 +570,7 @@ def run_get_lr_cosine_schedule(
     """
     return functions.learning_rate_cosine_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
 
+from cs336_basics import check_pointing
 
 def run_save_checkpoint(
     model: torch.nn.Module,
@@ -586,8 +588,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
-
+    check_pointing.save_checkpoint(model, optimizer, iteration, out)
 
 def run_load_checkpoint(
     src: str | os.PathLike | BinaryIO | IO[bytes],
@@ -607,7 +608,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return check_pointing.load_checkpoint(src, model, optimizer)
 
 from cs336_basics import tokenizer
 
