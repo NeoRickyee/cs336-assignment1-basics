@@ -9,8 +9,9 @@ from cs336_basics import rmsnorm, attention, positionwise_feedforward
 
 class Transformer(Module):
     def __init__(
-        self, d_model: int, num_attention_heads: int, d_ff: int,
+        self, d_model: int, num_attention_heads: int, 
         rope_theta: float, max_seq_len: int,
+        d_ff: Optional[int] = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):

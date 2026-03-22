@@ -14,3 +14,31 @@ def data_loading(
     input_tensor = torch.from_numpy(inputs).to(device=device)
     target_tensor = torch.from_numpy(targets).to(device=device)
     return input_tensor, target_tensor
+
+class SequentialDataset(torch.utils.data.IterableDataset):
+    def __init__(
+        self, data: np.ndarray, batch_size: int, context_length: int,
+        device: torch.device
+    ):
+        super().__init__()
+        self.data = data
+        self.batch_size = batch_size
+        self.context_length = context_length
+        self.device = device
+    
+    def __iter__(self):
+        stream_length = len(self.data) // self.batch_size
+        streams = self.data[:self.batch_size * stream_length].reshape(
+            self.batch_size, stream_length
+        )
+
+        for i in range(
+            0, stream_length - self.context_length, self.context_length
+        ):
+            chunks = streams[:, i:i+self.context_length+1].astype(np.int16)
+
+            # Transfer as int16 to save PCIe bandwidth, then cast to int64 on the GPU
+            x = torch.from_numpy(chunks[:,:-1]).to(self.device).long()
+            y = torch.from_numpy(chunks[:, 1:]).to(self.device).long()
+
+            yield x, y

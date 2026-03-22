@@ -11,8 +11,8 @@ from cs336_basics import embedding, transformer, rmsnorm, linear, functions
 class TransformerLM(Module):
     def __init__(
         self, vocab_size: int, context_length: int, num_layers: int,
-        d_model: int, num_attention_heads: int, d_ff: int,
-        rope_theta: float,
+        d_model: int, num_attention_heads: int, rope_theta: float,
+        d_ff: Optional[int] = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
@@ -20,7 +20,7 @@ class TransformerLM(Module):
         self.embedding = embedding.Embedding(vocab_size, d_model, device, dtype)
         self.transformers = nn.ModuleList([
             transformer.Transformer(
-                d_model, num_attention_heads, d_ff, rope_theta, context_length, device, dtype
+                d_model, num_attention_heads, rope_theta, context_length, d_ff, device, dtype
             ) for _ in range(num_layers)
         ])
         self.norm = rmsnorm.RMSNorm(d_model, device=device, dtype=dtype)

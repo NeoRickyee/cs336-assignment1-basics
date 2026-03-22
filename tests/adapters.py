@@ -303,7 +303,7 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    Transformer = transformer.Transformer(d_model, num_heads, d_ff, theta, max_seq_len)
+    Transformer = transformer.Transformer(d_model, num_heads, theta, max_seq_len, d_ff)
     Transformer.load_state_dict({
         "pre_attention_norm.weight": weights["ln1.weight"],
         "attention.wq.weight": weights["attn.q_proj.weight"],
@@ -399,7 +399,7 @@ def run_transformer_lm(
         next-word distribution for each token.
     """
     model = transformer_lm.TransformerLM(
-        vocab_size, context_length, num_layers, d_model, num_heads, d_ff, rope_theta
+        vocab_size, context_length, num_layers, d_model, num_heads, rope_theta, d_ff,
     )
 
     model.embedding.weight.data = weights["token_embeddings.weight"]
