@@ -10,6 +10,34 @@ def softmax(x: Tensor, dim: int = -1) -> Tensor:
     exp_x: Tensor = (x - C).exp()
     return (exp_x / exp_x.sum(dim=-1, keepdim=True)).transpose(-1, dim)
 
+def softmax_with_temp(x: Tensor, temp: float, dim: int = -1) -> Tensor:
+    x = x / temp
+    return softmax(x, dim)
+
+def top_p_sampling(q: Tensor, p: float) -> Tensor:
+    # sort in descending order
+    sorted_q, sorted_indices = torch.sort(q, descending=True, dim=-1)
+    # compute cumulative p
+    cumulative_p = torch.cumsum(sorted_q, dim=-1)
+    # create mask
+    sorted_indices_to_remove = cumulative_p > p
+    # shift mask to the right by 1 to include the crossing token
+    # Example, cum top 5 is 0.45, cum top 6 is 0.55, p is 0.5
+    # Want to include top 6, but since cum 6 > p, 6 is set to remove
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1]
+    # It is possible that top 1 is straight up 0.99, exceeding p
+    sorted_indices_to_remove[..., 0] = False
+
+    # set all q to ignore to 0
+    sorted_q.masked_fill_(sorted_indices_to_remove, 0.0)
+    # normalize to sum 1
+    sorted_q = sorted_q / sorted_q.sum(dim=-1, keepdim=True)
+    # randomly sample a index according to probability values
+    # the index here is not q's index, it's the sorted array's index
+    sampled_sorted_index = torch.multinomial(sorted_q, 1)
+    # get the actual index
+    return torch.gather(sorted_indices, dim=-1, index=sampled_sorted_index)
+
 def scaled_dot_product_attention(
     Q: Float[Tensor, "batch_size ... seq_len d_k"],
     K: Float[Tensor, "batch_size ... seq_len d_k"],
