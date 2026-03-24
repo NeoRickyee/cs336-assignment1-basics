@@ -21,7 +21,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train a Transformer LM")
     
     # Experiment Management
-    parser.add_argument("--dataset_name", type=str, default="openwebtext")
+    parser.add_argument("--dataset_name", type=str, default="tinystory")
     parser.add_argument("--wandb_project", type=str, default="cs336-assignment1")
     parser.add_argument("--wandb_name", type=str, default=None, help="Optional specific run name")
     
@@ -29,12 +29,12 @@ def get_args():
     parser.add_argument("--context_length", type=int, default=256)
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=512)
-    parser.add_argument("--num_attention_heads", type=int, default=16)
+    parser.add_argument("--num_attention_heads", type=int, default=16) # maybe bit much, try 8
     parser.add_argument("--d_ff", type=int, default=1344, help="Default is 8/3 * d_model")
     parser.add_argument("--rope_theta", type=float, default=10000.0)
     
     # Training Hyperparameters
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--beta1", type=float, default=0.9)
@@ -53,7 +53,7 @@ def get_args():
     parser.add_argument("--log_interval", type=int, default=100)
     
     # Generation & Evaluation
-    parser.add_argument("--print_sample_gen_at_checkpoint", type=bool, default=True)
+    parser.add_argument("--print_sample_gen_at_checkpoint", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--sample_prompt", type=str, default="Once upon a time", help="Prompt for sample generation")
     parser.add_argument("--max_gen_len", type=int, default=50, help="Maximum generation length")
     parser.add_argument("--temperature", type=float, default=0.8, help="Temperature for decoding")
