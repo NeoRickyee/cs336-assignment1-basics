@@ -32,8 +32,8 @@ VOCAB_SIZE = {
 }
 
 def init_directories(dataset_key: str):
-    os.makedirs(os.path.dirname(CHECKPOINT_SAVE_DIR.get(dataset_key, "unknown")), exist_ok=True)
-    os.makedirs(os.path.dirname(FUNDAMENTAL_MODEL_SAVE_DIR.get(dataset_key, "unknown")), exist_ok=True)
+    os.makedirs(CHECKPOINT_SAVE_DIR.get(dataset_key, "unknown"), exist_ok=True)
+    os.makedirs(FUNDAMENTAL_MODEL_SAVE_DIR.get(dataset_key, "unknown"), exist_ok=True)
 
 def get_vocab_path(dataset_key: str):
     return os.path.join(BPE_SAVE_DIR.get(dataset_key, "unknown"), "vocab.json")

@@ -6,7 +6,7 @@ import numpy as np
 import shutil
 import mmap
 
-from util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
+from bpe_util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
 from cs336_basics.bpe import BPE
 from cs336_basics.tokenizer import Tokenizer
 

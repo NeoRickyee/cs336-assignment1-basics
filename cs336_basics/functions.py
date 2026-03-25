@@ -24,7 +24,7 @@ def top_p_sampling(q: Tensor, p: float) -> Tensor:
     # shift mask to the right by 1 to include the crossing token
     # Example, cum top 5 is 0.45, cum top 6 is 0.55, p is 0.5
     # Want to include top 6, but since cum 6 > p, 6 is set to remove
-    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1]
+    sorted_indices_to_remove = torch.roll(sorted_indices_to_remove, shifts=1, dims=-1)
     # It is possible that top 1 is straight up 0.99, exceeding p
     sorted_indices_to_remove[..., 0] = False
 

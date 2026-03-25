@@ -5,12 +5,13 @@ import torch
 import threading
 import queue
 import wandb
+from dotenv import load_dotenv
 
 from argparse import Namespace
 from cs336_basics import transformer_lm, functions, adamw_optimizer, decoding, tokenizer
 from cs336_basics import check_pointing, data_loader
-from util import constants
-from util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
+from bpe_util import constants
+from bpe_util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
 from typing import Optional, Literal
 
 D_TYPE = torch.float32
@@ -34,7 +35,7 @@ def get_args():
     parser.add_argument("--rope_theta", type=float, default=10000.0)
     
     # Training Hyperparameters
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--beta1", type=float, default=0.9)
@@ -195,6 +196,11 @@ class Trainer:
         self.model.train()
 
     def train(self):
+        load_dotenv()
+        wandb_api_key = os.getenv("WANDB_API_KEY")
+        if wandb_api_key:
+            wandb.login(key=wandb_api_key)
+
         wandb.init(
             project=self.args.wandb_project,
             name=self.args.wandb_name,

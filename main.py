@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import argparse
 
-from util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
-from util.bpe_util import train_bpe, encode_dataset, decode_dataset
+from bpe_util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
+from bpe_util.bpe_util import train_bpe, encode_dataset, decode_dataset
 
 # python main.py train-bpe --dataset tinystory
 # python main.py encode --dataset tinystory --num-docs 10
