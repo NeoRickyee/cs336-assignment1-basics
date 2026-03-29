@@ -28,3 +28,15 @@ class Transformer(Module):
     def forward(self, x: Tensor, token_positions: Optional[Tensor] = None) -> Tensor:
         x_post_attention: Tensor = x + self.attention(self.pre_attention_norm(x), token_positions)
         return x_post_attention + self.ff(self.pre_ff_norm(x_post_attention))
+        
+        # post norm transformer
+        # x_post_attention: Tensor = self.pre_attention_norm(x + self.attention(x, token_positions))
+        # return self.pre_ff_norm(x_post_attention + self.ff(x_post_attention))
+    
+        # ???
+        # x_post_attention: Tensor = x + self.pre_attention_norm(self.attention(x, token_positions))
+        # return x_post_attention + self.pre_ff_norm(self.ff(x_post_attention))
+
+        # no norm transformer
+        # x_post_attention: Tensor = x + self.attention(x, token_positions)
+        # return x_post_attention + self.ff(x_post_attention)

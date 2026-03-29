@@ -22,7 +22,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train a Transformer LM")
     
     # Experiment Management
-    parser.add_argument("--dataset_name", type=str, default="tinystory")
+    parser.add_argument("--dataset_name", type=str, default="openwebtext")
     parser.add_argument("--wandb_project", type=str, default="cs336-assignment1")
     parser.add_argument("--wandb_name", type=str, default=None, help="Optional specific run name")
     
@@ -35,8 +35,10 @@ def get_args():
     parser.add_argument("--rope_theta", type=float, default=10000.0)
     
     # Training Hyperparameters
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--learning_rate", type=float, default=5e-4)
+    parser.add_argument("--batch_size", type=int, default=32)
+    # 64 for tinystory
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    # 5e-3 for tinystory
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--beta1", type=float, default=0.9)
     parser.add_argument("--beta2", type=float, default=0.95)
@@ -44,14 +46,17 @@ def get_args():
     parser.add_argument("--max_norm", type=float, default=1.0)
     
     # Learning Rate Schedule
-    parser.add_argument("--warmup_iters", type=int, default=1000)
+    parser.add_argument("--warmup_iters", type=int, default=4000)
+    # 1000 for tinystory
     parser.add_argument("--cosine_cycle_iters", type=int, default=100000)
     parser.add_argument("--min_learning_rate", type=float, default=1e-5)
     
     # Checkpointing & Limits
     parser.add_argument("--max_steps", type=int, default=100000, help="Maximum number of training steps")
+    parser.add_argument("--max_tokens", type=int, default=327680000, help="Maximum total tokens to train before exiting")
     parser.add_argument("--checkpoint_interval", type=int, default=3000)
     parser.add_argument("--log_interval", type=int, default=100)
+    parser.add_argument("--eval_batches", type=int, default=200, help="Number of batches to use for validation")
     
     # Generation & Evaluation
     parser.add_argument("--print_sample_gen_at_checkpoint", action=argparse.BooleanOptionalAction, default=True)
@@ -77,11 +82,17 @@ def background_worker(q):
             break
         step, metrics = task
 
-        loss_val = metrics.get("train/loss", 0.0)
-        lr_val = metrics.get("train/learning_rate", 0.0)
-        
-        # Keep the terminal output clean and precise
-        print(f"Step {step} | Loss: {loss_val:.4f} | LR: {lr_val:.2e}")
+        if "train/loss" in metrics:
+            print(f"Step {step} | Loss: {metrics['train/loss']:.4f} | LR: {metrics.get('train/learning_rate', 0.0):.2e}")
+            
+            # TODO: remove! print activation norms to confirm hooks are firing
+            activation_keys = [k for k in metrics.keys() if k.startswith("norms/activations_")]
+            if activation_keys:
+                avg_norm = sum(metrics[k] for k in activation_keys) / len(activation_keys)
+                print(f"          | Avg Activation Norm: {avg_norm:.4f}")
+            
+        if "valid/loss" in metrics:
+            print(f"Step {step} | Validation Loss: {metrics['valid/loss']:.4f}")
 
         wandb.log(metrics, step=step)
         q.task_done()
@@ -118,7 +129,9 @@ class Trainer:
         self.activation_norms = {}
         self._register_hooks()
 
-        self.compiled_model = torch.compile(self.model)
+        # self.compiled_model = torch.compile(self.model)
+        self.compiled_model = self.model
+        # TODO: change back if no need to monitor norms
 
         self.optimizer = adamw_optimizer.AdamW(
             params=self.model.parameters(),
@@ -127,9 +140,8 @@ class Trainer:
             betas=(args.beta1, args.beta2),
             eps=args.eps
         )
-        
-        self.compiled_train_step = torch.compile(self._train_step)
 
+        # self.compiled_train_step = torch.compile(self._train_step)
         self._setup_logging()
         self._setup_dataloader()
 
@@ -152,6 +164,53 @@ class Trainer:
             num_workers=1,
             pin_memory=True
         )
+
+        valid_data = load_dataset(self.args.dataset_name, split="valid")
+        if valid_data is not None:
+            self.valid_dataset = data_loader.SequentialDataset(
+                valid_data, self.args.batch_size, self.args.context_length, torch.device("cpu")
+            )
+            self.valid_dataloader = torch.utils.data.DataLoader(
+                dataset=self.valid_dataset,
+                batch_size=None,
+                num_workers=1,
+                pin_memory=True
+            )
+        else:
+            self.valid_dataloader = None
+
+    @torch.no_grad()
+    def evaluate_validation_loss(self) -> Optional[float]:
+        if getattr(self, "valid_dataloader", None) is None:
+            return None
+            
+        self.model.eval()
+        total_loss = 0.0
+        batches_evaluated = 0
+        
+        iterator = iter(self.valid_dataloader)
+        
+        for _ in range(self.args.eval_batches):
+            try:
+                x, y = next(iterator)
+            except StopIteration:
+                break
+                
+            x = x.to(self.device, non_blocking=True)
+            y = y.to(self.device, non_blocking=True)
+            
+            logits = self.compiled_model(x)
+            loss = functions.cross_entropy_loss(logits, y)
+            
+            total_loss += loss.item()
+            batches_evaluated += 1
+            
+        self.model.train()
+        
+        if batches_evaluated == 0:
+            return None
+            
+        return total_loss / batches_evaluated
 
     def _register_hooks(self):
         def get_activation_norm_hook(name):
@@ -209,23 +268,41 @@ class Trainer:
         self.logging_thread.start()
 
         step = 0
+        total_tokens = 0
+
+        tokens_per_step = self.args.batch_size * self.args.context_length
+        if self.args.max_tokens is not None:
+            calculated_max_steps = (self.args.max_tokens + tokens_per_step - 1) // tokens_per_step
+        else:
+            calculated_max_steps = self.args.max_steps
+        if calculated_max_steps < self.args.cosine_cycle_iters:
+            cosine_cycle_iters = calculated_max_steps
+        else:
+            cosine_cycle_iters = self.args.cosine_cycle_iters
+
         for step, (x, y) in enumerate(self.dataloader):
             if step >= self.args.max_steps:
                 break
                 
+            if self.args.max_tokens is not None and total_tokens >= self.args.max_tokens:
+                break
+
             x = x.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
+
+            total_tokens += x.numel()
 
             lr = functions.learning_rate_cosine_schedule(
                 step, alpha_max=self.args.learning_rate,
                 alpha_min=self.args.min_learning_rate,
                 T_warm=self.args.warmup_iters,
-                T_c_anneal=self.args.cosine_cycle_iters
+                T_c_anneal=cosine_cycle_iters
             )
             for group in self.optimizer.param_groups:
                 group["alpha"] = lr
 
-            loss, param_norm, grad_norm = self.compiled_train_step(x, y)
+            # loss, param_norm, grad_norm = self.compiled_train_step(x, y)
+            loss, param_norm, grad_norm = self._train_step(x, y)
             self.optimizer.step()
 
             if step % self.args.log_interval == 0:
@@ -234,6 +311,7 @@ class Trainer:
                     "train/learning_rate": lr,
                     "norms/weights_l2": param_norm.detach().cpu().item(),
                     "norms/gradients_l2": grad_norm.detach().cpu().item(),
+                    "train/total_tokens": total_tokens,
                 }
                 
                 for name, norm_val in self.activation_norms.items():
@@ -242,6 +320,10 @@ class Trainer:
                 self.logging_queue.put((step, metrics))
             
             if step > 0 and step % self.args.checkpoint_interval == 0:
+                val_loss = self.evaluate_validation_loss()
+                if val_loss is not None:
+                    self.logging_queue.put((step, {"valid/loss": val_loss}))
+
                 checkpoint_out_path = constants.get_checkpoint_output_path(self.args.dataset_name, step)
                 check_pointing.save_checkpoint(self.model, self.optimizer, step, checkpoint_out_path)
 
@@ -251,10 +333,13 @@ class Trainer:
         # Save final model
         model_out_path = constants.get_fundamental_model_save_path(self.args.dataset_name)
         check_pointing.save_checkpoint(self.model, self.optimizer, step, model_out_path)
+        val_loss = self.evaluate_validation_loss()
+        self.logging_queue.put((step, {"valid/loss": val_loss}))
 
         # Cleanup logging
         self.logging_queue.put(None)
         self.logging_thread.join()
+        wandb.finish()
         
         print("\nTraining Complete!")
         self.generate_sample(self.args.sample_prompt, step)
