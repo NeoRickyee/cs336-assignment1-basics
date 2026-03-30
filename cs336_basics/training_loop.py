@@ -12,7 +12,7 @@ from cs336_basics import transformer_lm, functions, adamw_optimizer, decoding, t
 from cs336_basics import check_pointing, data_loader
 from bpe_util import constants
 from bpe_util.constants import DATASETS, DATASETS_VALID, BPE_SAVE_DIR, VOCAB_SIZE
-from typing import Optional, Literal
+from typing import Optional, Literal, Tuple
 
 D_TYPE = torch.float32
 DEVICE = torch.device("cuda")
@@ -37,7 +37,9 @@ def get_args():
     # Training Hyperparameters
     parser.add_argument("--batch_size", type=int, default=32)
     # 64 for tinystory
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
+    # 1 for tinystory
+    parser.add_argument("--learning_rate", type=float, default=5e-4)
     # 5e-3 for tinystory
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--beta1", type=float, default=0.9)
@@ -46,14 +48,14 @@ def get_args():
     parser.add_argument("--max_norm", type=float, default=1.0)
     
     # Learning Rate Schedule
-    parser.add_argument("--warmup_iters", type=int, default=4000)
+    parser.add_argument("--warmup_iters", type=int, default=2000)
     # 1000 for tinystory
     parser.add_argument("--cosine_cycle_iters", type=int, default=100000)
     parser.add_argument("--min_learning_rate", type=float, default=1e-5)
     
     # Checkpointing & Limits
     parser.add_argument("--max_steps", type=int, default=100000, help="Maximum number of training steps")
-    parser.add_argument("--max_tokens", type=int, default=327680000, help="Maximum total tokens to train before exiting")
+    parser.add_argument("--max_tokens", type=int, default=327680000*3, help="Maximum total tokens to train before exiting")
     parser.add_argument("--checkpoint_interval", type=int, default=3000)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--eval_batches", type=int, default=200, help="Number of batches to use for validation")
@@ -141,13 +143,27 @@ class Trainer:
             eps=args.eps
         )
 
+        tokens_per_step = self.args.batch_size * self.args.context_length * self.args.gradient_accumulation_steps
+        if self.args.max_tokens is not None:
+            self.max_steps = (self.args.max_tokens + tokens_per_step - 1) // tokens_per_step
+        else:
+            self.max_steps = self.args.max_steps
+        if self.max_steps < self.args.cosine_cycle_iters:
+            self.cosine_cycle_iters = self.max_steps
+        else:
+            self.cosine_cycle_iters = self.args.cosine_cycle_iters
+
         # self.compiled_train_step = torch.compile(self._train_step)
         self._setup_logging()
         self._setup_dataloader()
+        self.data_iterator = iter(enumerate(self.dataloader))
+        self.step = 0
+        self.total_trained_tokens = 0
+        self.training_end = False
 
     def _setup_logging(self):
         self.logging_queue = queue.Queue()
-        self.logging_thread = threading.Thread(target=background_worker, args=(self.logging_queue,))
+        self.logging_thread = threading.Thread(target=background_worker, args=(self.logging_queue,), daemon=True)
 
     def _setup_dataloader(self):
         data = load_dataset(self.args.dataset_name)
@@ -178,6 +194,13 @@ class Trainer:
             )
         else:
             self.valid_dataloader = None
+
+    def get_next_data_batch(self):
+        try:
+            step, (x, y) = next(self.data_iterator)
+            return step, x, y
+        except StopIteration:
+            return None
 
     @torch.no_grad()
     def evaluate_validation_loss(self) -> Optional[float]:
@@ -224,19 +247,88 @@ class Trainer:
             layer.register_forward_hook(get_activation_norm_hook(f"layer_{i}"))
         self.model.output_embedding.register_forward_hook(get_activation_norm_hook("output_embedding"))
 
-    def _train_step(self, x, y):
-        self.optimizer.zero_grad(set_to_none=True)
-
+    def _mini_train_step(self, x, y):
         logits = self.compiled_model(x)
         loss = functions.cross_entropy_loss(logits, y)
-        loss.backward()
+        
+        # Scale loss to average gradients across accumulation steps
+        scaled_loss = loss / self.args.gradient_accumulation_steps
+        scaled_loss.backward()
+        return scaled_loss
 
-        param_norm = torch.norm(torch.stack([torch.norm(p.detach(), 2.0) for p in self.model.parameters()]), 2.0)
-        grads = [p.grad for p in self.model.parameters() if p.grad is not None]
-        grad_norm = torch.norm(torch.stack([torch.norm(g.detach(), 2.0) for g in grads]), 2.0) if grads else torch.tensor(0.0, device=x.device)
+    def _train_step(self):
+        accumulated_loss = 0.0
+        for _ in range(self.args.gradient_accumulation_steps):
+            batch_data = self.get_next_data_batch()
+            if not batch_data:
+                # no more training data
+                self.training_end = True
+                break
+            mini_step, x, y = batch_data
+            
+            x = x.to(self.device, non_blocking=True)
+            y = y.to(self.device, non_blocking=True)
 
+            self.total_trained_tokens += x.numel()
+            loss = self._mini_train_step(x, y)
+            accumulated_loss += loss.detach()
+
+        self.step += 1
+        if self.step >= self.args.max_steps:
+            self.training_end = True
+        if self.args.max_tokens is not None:
+            if self.total_trained_tokens >= self.args.max_tokens:
+                self.training_end = True
+
+        lr = functions.learning_rate_cosine_schedule(
+            t = self.step,
+            alpha_max = self.args.learning_rate,
+            alpha_min = self.args.min_learning_rate,
+            T_warm = self.args.warmup_iters,
+            T_c_anneal = self.cosine_cycle_iters
+        )
+
+        for group in self.optimizer.param_groups:
+            group["alpha"] = lr
+        
+        if self.step % self.args.log_interval == 0:
+            param_norm = torch.linalg.vector_norm(
+                torch.stack(
+                    [torch.linalg.vector_norm(p.detach(), ord=2.0) for p in self.model.parameters()]
+                ), ord=2.0
+            )
+            grads = [p.grad for p in self.model.parameters() if p.grad is not None]
+            grad_norm = torch.linalg.vector_norm(
+                torch.stack([torch.linalg.vector_norm(g.detach(), ord=2.0) for g in grads]), ord=2.0
+            ) if grads else torch.tensor(0.0, device=self.device)
+
+        # Clip gradients on accumulated grads
         functions.gradient_clipping(self.model.parameters(), self.args.max_norm)
-        return loss, param_norm, grad_norm
+
+        self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        # logging
+        if self.step % self.args.log_interval == 0:
+            metrics = {
+                "train/loss": accumulated_loss.cpu().item(),
+                "train/learning_rate": lr,
+                "norms/weights_l2": param_norm.detach().cpu().item(),
+                "norms/gradients_l2": grad_norm.detach().cpu().item(),
+            }
+            for name, norm_val in self.activation_norms.items():
+                metrics[f"norms/activations_{name}"] = norm_val
+            self.logging_queue.put((self.step, metrics))
+        # checkpointing
+        if (not self.training_end) and self.step > 0 and self.step % self.args.checkpoint_interval == 0:
+            val_loss = self.evaluate_validation_loss()
+            if val_loss is not None:
+                self.logging_queue.put((self.step, {"valid/loss": val_loss}))
+
+            checkpoint_out_path = constants.get_checkpoint_output_path(self.args.dataset_name, self.step)
+            check_pointing.save_checkpoint(self.model, self.optimizer, self.step, checkpoint_out_path)
+
+            if self.args.print_sample_gen_at_checkpoint:
+                self.generate_sample(self.args.sample_prompt, self.step)
 
     def generate_sample(self, prompt: str, step: Optional[int] = None):
         if self.tok is None or not prompt:
@@ -267,82 +359,22 @@ class Trainer:
         )
         self.logging_thread.start()
 
-        step = 0
-        total_tokens = 0
-
-        tokens_per_step = self.args.batch_size * self.args.context_length
-        if self.args.max_tokens is not None:
-            calculated_max_steps = (self.args.max_tokens + tokens_per_step - 1) // tokens_per_step
-        else:
-            calculated_max_steps = self.args.max_steps
-        if calculated_max_steps < self.args.cosine_cycle_iters:
-            cosine_cycle_iters = calculated_max_steps
-        else:
-            cosine_cycle_iters = self.args.cosine_cycle_iters
-
-        for step, (x, y) in enumerate(self.dataloader):
-            if step >= self.args.max_steps:
-                break
-                
-            if self.args.max_tokens is not None and total_tokens >= self.args.max_tokens:
-                break
-
-            x = x.to(self.device, non_blocking=True)
-            y = y.to(self.device, non_blocking=True)
-
-            total_tokens += x.numel()
-
-            lr = functions.learning_rate_cosine_schedule(
-                step, alpha_max=self.args.learning_rate,
-                alpha_min=self.args.min_learning_rate,
-                T_warm=self.args.warmup_iters,
-                T_c_anneal=cosine_cycle_iters
-            )
-            for group in self.optimizer.param_groups:
-                group["alpha"] = lr
-
-            # loss, param_norm, grad_norm = self.compiled_train_step(x, y)
-            loss, param_norm, grad_norm = self._train_step(x, y)
-            self.optimizer.step()
-
-            if step % self.args.log_interval == 0:
-                metrics = {
-                    "train/loss": loss.detach().cpu().item(),
-                    "train/learning_rate": lr,
-                    "norms/weights_l2": param_norm.detach().cpu().item(),
-                    "norms/gradients_l2": grad_norm.detach().cpu().item(),
-                    "train/total_tokens": total_tokens,
-                }
-                
-                for name, norm_val in self.activation_norms.items():
-                    metrics[f"norms/activations_{name}"] = norm_val
-                    
-                self.logging_queue.put((step, metrics))
-            
-            if step > 0 and step % self.args.checkpoint_interval == 0:
-                val_loss = self.evaluate_validation_loss()
-                if val_loss is not None:
-                    self.logging_queue.put((step, {"valid/loss": val_loss}))
-
-                checkpoint_out_path = constants.get_checkpoint_output_path(self.args.dataset_name, step)
-                check_pointing.save_checkpoint(self.model, self.optimizer, step, checkpoint_out_path)
-
-                if self.args.print_sample_gen_at_checkpoint:
-                    self.generate_sample(self.args.sample_prompt, step)
+        while not self.training_end:
+            self._train_step()
 
         # Save final model
         model_out_path = constants.get_fundamental_model_save_path(self.args.dataset_name)
-        check_pointing.save_checkpoint(self.model, self.optimizer, step, model_out_path)
+        check_pointing.save_checkpoint(self.model, self.optimizer, self.step, model_out_path)
         val_loss = self.evaluate_validation_loss()
-        self.logging_queue.put((step, {"valid/loss": val_loss}))
+        self.logging_queue.put((self.step, {"valid/loss": val_loss}))
 
         # Cleanup logging
         self.logging_queue.put(None)
         self.logging_thread.join()
         wandb.finish()
-        
+
         print("\nTraining Complete!")
-        self.generate_sample(self.args.sample_prompt, step)
+        self.generate_sample(self.args.sample_prompt, self.step)
 
     def interactive_prompt(self):
         print("\nEntering interactive generation mode. Type 'quit' or 'exit' to stop.")
